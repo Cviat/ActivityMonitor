@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Employee Activity Monitor</title>
+    <link rel="stylesheet" href="site.css">
+</head>
+<body>
+
+    <div class="header">
+        <div class="title">Employee Activity Monitor</div>
+        <div id="stats" style="color: var(--text-muted); font-size: 14px;">Подключено клиентов: 0</div>
+    </div>
+
+    <div class="grid" id="clientsGrid">
+    </div>
+
+    <div class="modal" id="screenshotModal">
+        <div class="modal-content">
+            <h3 id="modalTitle" style="margin-top:0; font-size: 16px;">Скриншот рабочего стола</h3>
+            <img id="screenshotImg" src="" alt="Изображение загружается...">
+            <div>
+                <button class="close-btn" onclick="closeModal()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const screenshotsCache = {};
+
+        async function fetchClients() {
+            try {
+                const response = await fetch('/api/clients');
+                const clients = await response.json();
+
+                const grid = document.getElementById('clientsGrid');
+                document.getElementById('stats').innerText = `Подключено клиентов: ${clients.length}`;
+                
+                grid.innerHTML = clients.map(client => {
+                    const lastActive = new Date(client.lastActiveTime);
+                    const now = new Date();
+                    // Если пинга не было более 5 секунд — клиент считается Offline
+                    const isOnline = (now - lastActive) < 5000;
+
+                    if (client.latestScreenshotBase64) {
+                        screenshotsCache[client.id] = client.latestScreenshotBase64;
+                    }
+
+                    const hasScreenshot = !!screenshotsCache[client.id];
+
+                    let screenshotBtnHtml = '';
+                    if (!isOnline) {
+                        screenshotBtnHtml = `<button class="btn btn-secondary" disabled>Клиент не в сети</button>`;
+                    } else if (client.screenshotRequested) {
+                        screenshotBtnHtml = `<button class="btn btn-secondary" disabled>Запрос отправлен...</button>`;
+                    } else {
+                        screenshotBtnHtml = `<button class="btn" onclick="requestScreenshot('${escapeJs(client.id)}')">Запросить скриншот</button>`;
+                    }
+
+                    return `
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="user-name">${escapeHtml(client.domain)}\\${escapeHtml(client.userName)}</div>
+                                <span class="badge ${isOnline ? 'status-online' : 'status-offline'}">
+                                    ${isOnline ? 'Online' : 'Offline'}
+                                </span>
+                            </div>
+                            <div class="info-row">Имя ПК: <span>${escapeHtml(client.machineName)}</span></div>
+                            <div class="info-row">IP-адрес: <span>${escapeHtml(client.ipAddress)}</span></div>
+                            <div class="info-row">Последняя активность: <span>${lastActive.toLocaleTimeString()}</span></div>
+                            
+                            ${screenshotBtnHtml}
+                            
+                            ${hasScreenshot ? `
+                                <button class="btn btn-secondary" onclick="viewScreenshot('${escapeJs(client.id)}')">Просмотреть скриншот</button>
+                            ` : ''}
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function requestScreenshot(clientId) {
+            await fetch('/api/clients/request-screenshot', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId: clientId })
+            });
+            fetchClients();
+        }
+
+        function viewScreenshot(clientId) {
+            const base64 = screenshotsCache[clientId];
+            if (base64) {
+                document.getElementById('modalTitle').innerText = `Скриншот: ${clientId}`;
+                document.getElementById('screenshotImg').src = `data:image/jpeg;base64,${base64}`;
+                document.getElementById('screenshotModal').style.display = 'flex';
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('screenshotModal').style.display = 'none';
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function escapeJs(str) {
+            return str.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+        }
+
+        setInterval(fetchClients, 2000);
+        fetchClients();
+    </script>
+</body>
+</html>
